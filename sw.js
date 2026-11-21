@@ -1,0 +1,115 @@
+self.addEventListener('install', () => { self.skipWaiting(); });
+self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
+
+function hpSwLease(d, ja) {
+  const x = Math.floor(Number(d && d.x)), n = Math.floor(Number(d && d.d));
+  if (!(x > 0) || !(n >= 1 && n <= 3650)) return null;
+  const t = new Date(x), p = (v) => (v < 10 ? '0' : '') + v, w = (t.getMonth() + 1) + '/' + t.getDate() + ' ' + p(t.getHours()) + ':' + p(t.getMinutes());
+  return ja ? '郵便受けの期限まであと ' + n + ' 日です（' + w + '）。延長は Handpost の郵便受けのタブから。'
+    : 'Your mailbox expires in ' + n + (n === 1 ? ' day' : ' days') + ' (' + w + '). Extend it from the Mailbox tab in Handpost.';
+}
+
+function hpSwDb() { return new Promise((res, rej) => { try { const q = indexedDB.open('hp-diag', 1); q.onupgradeneeded = () => { try { q.result.createObjectStore('push', { autoIncrement: true }); } catch (x) { } }; q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); } catch (x) { rej(x); } }); }
+function hpSwNote(o) { try { return hpSwDb().then((db) => new Promise((res) => { try { const tx = db.transaction('push', 'readwrite'); tx.objectStore('push').add(o); tx.oncomplete = () => { db.close(); res(); }; tx.onerror = () => { db.close(); res(); }; } catch (x) { res(); } })).catch(() => { }); } catch (x) { return Promise.resolve(); } }
+
+function hpSwCapDb() { return new Promise((res, rej) => { try { const q = indexedDB.open('hp-cap', 1); q.onupgradeneeded = () => { try { q.result.createObjectStore('cap', { keyPath: 'key' }); } catch (x) { } }; q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error || new Error('idb')); } catch (x) { rej(x); } }); }
+function hpSwCapPut(o) { try { return hpSwCapDb().then((db) => new Promise((res) => { try { const tx = db.transaction('cap', 'readwrite'); tx.objectStore('cap').put(o); tx.oncomplete = () => { db.close(); res(true); }; tx.onerror = () => { db.close(); res(false); }; } catch (x) { try { db.close(); } catch (y) { } res(false); } })).catch(() => false); } catch (x) { return Promise.resolve(false); } }
+
+function hpSwCallHide(cs, cl) { let live = false; try { live = Array.isArray(cs) && cs.some((c) => c.visibilityState === 'visible'); } catch (x) { live = false; } if (!live) return Promise.resolve(false);
+  return self.registration.getNotifications({ tag: 'hp-call' }).then((l) => { let k = 0; for (const n of (l || [])) { try { if (!(n.data && n.data.ended)) { n.close(); k++; } } catch (x) { } } return k > 0; }).catch(() => false); }
+
+function hpSwHideLater(tag) { const at = [0, 400, 1200, 2500]; let k = 0; const one = () => self.registration.getNotifications({ tag: tag }).then((l) => { for (const n of (l || [])) { try { if (!(n.data && n.data.ended)) { n.close(); k++; } } catch (x) { } } }).catch(() => { });
+  return at.reduce((p, ms, i) => p.then(() => new Promise((res) => setTimeout(res, i ? ms - at[i - 1] : ms))).then(one), Promise.resolve()).then(() => k > 0).catch(() => false); }
+function hpSwCapTell(cs, o) { const m = { t: 'hp-cap', key: o.key, k: o.k, call: o.call, at: o.at, w: o.w, cap: o.cap }; try { for (const c of (cs || [])) { try { c.postMessage(m); } catch (x) { } } } catch (x) { } try { if (typeof BroadcastChannel === 'function') { const bc = new BroadcastChannel('hp-cap'); bc.postMessage(m); bc.close(); } } catch (x) { } }
+function hpSwCapRec(d, k) { return { key: k + ':' + String(d.call || ''), k: k, call: String(d.call || ''), at: Number(d.at) || 0, w: Number(d.w) || 0, cap: String(d.cap || '') }; }
+
+function hpSwCapGet(key) { try { return hpSwCapDb().then((db) => new Promise((res) => { try { const rq = db.transaction('cap', 'readonly').objectStore('cap').get(key); rq.onsuccess = () => { try { db.close(); } catch (x) { } res(rq.result || null); }; rq.onerror = () => { try { db.close(); } catch (x) { } res(null); }; } catch (x) { try { db.close(); } catch (y) { } res(null); } })).catch(() => null); } catch (x) { return Promise.resolve(null); } }
+function hpSwCapName(call) { return hpSwCapGet('nm:' + String(call || '')).then((o) => (o && typeof o.nm === 'string' && o.nm && Date.now() - Number(o.at || 0) < 600000) ? o.nm : '').catch(() => ''); }
+
+const HP_SW_FWD_MS = 30000;
+function hpSwRsWait() { try { return new Promise((res) => { try { setTimeout(() => res(false), 1500); } catch (x) { res(false); return; } try { const q = indexedDB.open('hp-rs', 1); q.onupgradeneeded = () => { try { q.result.createObjectStore('kv', { keyPath: 'key' }); } catch (x) { } }; q.onsuccess = () => { const db = q.result; try { const rq = db.transaction('kv', 'readonly').objectStore('kv').get('wait'); rq.onsuccess = () => { try { db.close(); } catch (x) { } const o = rq.result; res(!!(o && o.w === 1 && Date.now() - Number(o.at || 0) < 30 * 864e5)); }; rq.onerror = () => { try { db.close(); } catch (x) { } res(false); }; } catch (x) { try { db.close(); } catch (y) { } res(false); } }; q.onerror = () => res(false); } catch (x) { res(false); } }); } catch (x) { return Promise.resolve(false); } }
+function hpSwIOS() { try { return /iPhone|iPad|iPod/.test(String((self.navigator && self.navigator.userAgent) || '')); } catch (x) { return false; } }
+function hpSwPriHold(cl, cs, front, old) { try { if (old || front || hpSwIOS() || typeof indexedDB === 'undefined') return null; let live = false; try { live = Array.isArray(cs) && cs.some((c) => c.visibilityState === 'visible'); } catch (x) { live = false; } if (live) return null;
+  return hpSwRsWait().then((w) => { if (!w) return ''; return new Promise((r) => setTimeout(r, HP_SW_FWD_MS)).then(() => hpSwCapGet('callend:' + String(cl.call || ''))).then((o) => { if (!o) return ''; let x = ''; try { x = String(JSON.parse(o.cap).x || ''); } catch (y) { x = ''; } return x === 't' ? 't' : 'e'; }); }).catch(() => ''); } catch (x) { return null; } }
+function hpSwHoldShow(hold, cl, ja) { const call = String((cl && cl.call) || '');
+  if (hold === 't') return self.registration.showNotification('Handpost', { body: hpSwSigText('callend', '', 't', ja), tag: 'hp-sig', silent: true, data: { call: call, k: 'callend' }, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png' }).then(() => hpSwHideLater('hp-sig'));
+  return self.registration.showNotification('Handpost', { body: ja ? '通話の着信がありました。Handpost からかけ直せます' : 'You missed a call. You can call back from Handpost.', tag: 'hp-call', renotify: false, data: { call: call, ended: 1 }, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png' }); }
+function hpSwSigText(k, nm, hx, ja) {
+  if (k === 'callans' && hx === 'v') return ja ? (nm ? nm + ' が出ました。つながるまでお待ちください' : '通話の答えが届きました。つながるまでお待ちください') : (nm ? nm + ' answered. Please wait while connecting' : 'Call answered. Please wait while connecting');
+  if (k === 'callans') return ja ? (nm ? nm + ' が出ました。押すと話せます' : '通話の答えが届きました。押すと話せます') : (nm ? nm + ' answered. Tap to talk' : 'Call answered. Tap to talk');
+  if (k === 'callgo') return ja ? (nm ? nm + ' と通話を始めます' : '通話を始めます') : (nm ? 'Starting the call with ' + nm : 'Starting the call');
+  if (k === 'callend') { if (hx === 't') return ja ? '通話にはほかの端末で出ました' : 'The call was answered on another device'; return ja ? (nm ? nm + ' との通話が終わりました' : '通話が終わりました') : (nm ? 'The call with ' + nm + ' ended' : 'The call ended'); }
+  return ja ? '通話の合図' : 'Call signal';
+}
+
+function hpSwLetterWait(cs) {
+  if (typeof MessageChannel !== 'function' || !Array.isArray(cs) || !cs.length) return Promise.resolve(null);
+  return new Promise((res) => { let done = false, t2 = null; const fin = (v) => { if (done) return; done = true; clearTimeout(t1); if (t2) clearTimeout(t2); res(v); };
+    const t1 = setTimeout(() => fin(null), 1500);
+    for (const c of cs) { try { const ch = new MessageChannel(); ch.port1.onmessage = (m) => { const d = (m && m.data) || {}; if (d.t === 'alive') { clearTimeout(t1); if (!t2) t2 = setTimeout(() => fin({ peer: '', n: 0 }), 8000); } else if (d.t === 'ready') fin({ peer: String(d.peer || ''), n: Number(d.n) || 0 }); }; c.postMessage({ t: 'hp-letter-push' }, [ch.port2]); } catch (x) { } } }); }
+function hpSwLetterText(n, ja) { return n > 1 ? (ja ? '手紙が ' + n + ' 通届きました' : n + ' letters have arrived') : (ja ? '手紙が届きました' : 'A letter has arrived'); }
+self.addEventListener('push', (e) => {
+  let ja = true; try { ja = /^ja/i.test(String((self.navigator && self.navigator.language) || 'ja')); } catch (x) { }
+  let ls = null; try { const d = e.data ? e.data.json() : null; if (d && d.x !== undefined) ls = hpSwLease(d, ja); } catch (x) { ls = null; }
+  if (ls) { e.waitUntil(self.registration.showNotification('Handpost', { body: ls, tag: 'hp-lease', renotify: true, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png' })); return; }
+
+  let cl = null; try { const d = e.data ? e.data.json() : null; if (d && d.c === 1) cl = d; } catch (x) { cl = null; }
+  if (cl) {
+    const w = Math.max(60000, Math.min(600000, (Number(cl.w) || 60) * 1000));
+    const old = Date.now() - Number(cl.at || 0) > w;
+    const body = old ? (ja ? '通話の着信がありました。Handpost を開いてください' : 'You missed a call. Open Handpost.') : (ja ? '通話の着信です。押すと Handpost が開きます' : 'Incoming call. Tap to open Handpost.');
+
+    let lst = null; try { lst = self.clients.matchAll({ type: 'window', includeUncontrolled: true }); } catch (x) { lst = null; }
+    const rec = (typeof cl.cap === 'string' && cl.cap) ? hpSwCapRec(cl, 'call') : null;
+    e.waitUntil(Promise.resolve(lst || []).then((cs) => {
+      let front = false; try { front = cs.some((c) => c.visibilityState === 'visible' && c.focused); } catch (x) { front = false; }
+      const keep = rec ? hpSwCapPut(rec).then(() => hpSwCapTell(cs, rec)) : Promise.resolve();
+      return keep.then(() => { const ph = hpSwPriHold(cl, cs, front, old); return ph ? ph.then((hold) => hold ? hpSwHoldShow(hold, cl, ja) : hpSwCallShow()) : hpSwCallShow(); function hpSwCallShow() { return self.registration.showNotification('Handpost', Object.assign({ body: body, tag: 'hp-call', renotify: true, requireInteraction: !old && !front, silent: front, data: { call: String(cl.call || '') }, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png' }, front ? {} : { vibrate: old ? [200] : [400, 200, 400, 200, 400, 200, 400] })); } })
+        .then(() => hpSwCallHide(cs, cl)).then((h) => { let live = false; try { live = Array.isArray(cs) && cs.some((c) => c.visibilityState === 'visible'); } catch (x) { live = false; } return live ? hpSwHideLater('hp-call') : h; })
+        .then(() => hpSwNote({ t: Date.now(), at: Number(cl.at) || 0, front: front ? 1 : 0, ok: 1, n: Array.isArray(cs) ? cs.length : 0 }), (er) => hpSwNote({ t: Date.now(), at: Number(cl.at) || 0, front: front ? 1 : 0, n: Array.isArray(cs) ? cs.length : 0, ok: 0, why: String((er && er.message) || er).slice(0, 80) }));
+    }).catch(() => self.registration.showNotification('Handpost', { body: body, tag: 'hp-call', renotify: true, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png' })));
+    return;
+  }
+  let sg = null; try { const d = e.data ? e.data.json() : null; if (d && d.s === 1 && typeof d.k === 'string' && typeof d.cap === 'string' && d.cap) sg = d; } catch (x) { sg = null; }
+  if (sg) {
+    const rec = hpSwCapRec(sg, sg.k);
+    let hx = ''; try { hx = String(JSON.parse(sg.cap).x || ''); } catch (x) { hx = ''; }
+    let lw2 = null; try { lw2 = self.clients.matchAll({ type: 'window', includeUncontrolled: true }); } catch (x) { lw2 = null; }
+    e.waitUntil(Promise.resolve(lw2 || []).catch(() => []).then((cs) => hpSwCapPut(rec).then(() => { hpSwCapTell(cs, rec); return cs; })).then((cs) => {
+      const miss = (sg.k === 'callend') ? self.registration.getNotifications({ tag: 'hp-call' }).then((l) => { let had = false; for (const n of (l || [])) { try { if (n.data && n.data.call === rec.call) { had = true; n.close(); } } catch (x) { } } return had; }).catch(() => false) : Promise.resolve(false);
+      return Promise.all([miss, hpSwCapName(rec.call)]).then((hn) => {
+        const had = hn[0], nm = hn[1] || '';
+        let live = false; try { live = Array.isArray(cs) && cs.some((c) => c.visibilityState === 'visible'); } catch (x) { live = false; }
+        if (had && !(Array.isArray(cs) && cs.length)) {
+          if (hx === 't') return self.registration.showNotification('Handpost', { body: hpSwSigText('callend', nm, hx, ja), tag: 'hp-call', renotify: false, silent: true, data: { call: rec.call, ended: 1 }, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png' });
+          return self.registration.showNotification('Handpost', { body: ja ? '通話の着信がありました。Handpost からかけ直せます' : 'You missed a call. You can call back from Handpost.', tag: 'hp-call', renotify: false, data: { call: rec.call, ended: 1 }, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png' });
+        }
+        const loud = sg.k === 'callans' && !live;
+        return self.registration.showNotification('Handpost', { body: hpSwSigText(sg.k, nm, (live && sg.k === 'callans') ? 'v' : hx, ja), tag: 'hp-sig', silent: !loud, data: { call: rec.call, k: sg.k }, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png' })
+          .then(() => { if (!live) return null; return hpSwHideLater('hp-sig'); }).catch(() => { });
+      });
+    }));
+    return;
+  }
+  let n = 0; try { const d = e.data ? e.data.json() : null; n = Math.floor(Number(d && d.n)); if (!(n >= 1 && n <= 99999)) n = 0; } catch (x) { n = 0; }
+  const body = n > 0 ? (ja ? '郵便受けに手紙が ' + n + ' 通届いています' : 'Letters in your mailbox: ' + n) : (ja ? '手紙が届きました' : 'A letter has arrived');
+
+  let lw = null; try { lw = self.clients.matchAll({ type: 'window', includeUncontrolled: true }); } catch (x) { lw = null; }
+  e.waitUntil(Promise.resolve(lw || []).catch(() => []).then((cs) => {
+    let front = false; try { front = Array.isArray(cs) && cs.some((c) => c.visibilityState === 'visible'); } catch (x) { front = false; }
+    if (!front) return hpSwLetterWait(cs).then((r) => self.registration.showNotification('Handpost', Object.assign({ body: r ? hpSwLetterText(r.n, ja) : body, tag: 'hp-letter', renotify: true, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png' }, r ? { data: { letter: 1, peer: r.peer } } : {})));
+    return self.registration.showNotification('Handpost', { body: body, tag: 'hp-letter', silent: true, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png' })
+      .then(() => self.registration.getNotifications({ tag: 'hp-letter' })).then((l) => { for (const n of (l || [])) n.close(); }).catch(() => { });
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  let call = false; try { call = e.notification.tag === 'hp-call'; } catch (x) { call = false; }
+  let lt = null; try { if (e.notification.tag === 'hp-letter') lt = e.notification.data || {}; } catch (x) { lt = null; }
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((cs) => {
+    for (const c of cs) { if ('focus' in c) { if (call) { try { c.postMessage({ t: 'hp-call-open' }); } catch (x) { } } if (lt) { try { c.postMessage({ t: 'hp-letter-open', peer: String(lt.peer || '') }); } catch (x) { } } return c.focus(); } }
+    if (lt) return self.clients.openWindow('/#hpletter');
+    return self.clients.openWindow(call ? '/#hpcall' : '/');
+  }));
+});
